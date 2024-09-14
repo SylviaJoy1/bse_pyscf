@@ -16,9 +16,6 @@
 #         Tim
 #
 
-#from pyscf import scf
-#from pyscf import dft
-from pyscf import gw
 from pyscf.bse import BSE
 from pyscf.bse import TDA_BSE
 
