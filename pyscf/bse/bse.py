@@ -112,7 +112,7 @@ gen_tda_bse_hop = gen_tda_bse_operation
 #TODO: re-implement get_nto() and analyze() and _analyze_wfnsym() and _guess_wfnsym_id() and _guess_wfnsym_id
 # if necessary to take into account orbs subspace
 #otherwise, just import tdscf functions
-from pyscf.tdscf.rhf import _guess_wfnsym_id
+#from pyscf.tdscf.rhf import _guess_wfnsym_id
 
 #bseobj should have attribute orbs
 #TODO: include orbs here (See my spectra code)
