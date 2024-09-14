@@ -16,26 +16,14 @@
 #         Tim
 #
 
-from pyscf import scf
-from pyscf import dft
-#TODO
-#from pyscf.bse import bse
-#from pyscf.tdscf.bse import BSE
+#from pyscf import scf
+#from pyscf import dft
+from pyscf import gw
+from pyscf.bse import BSE
+from pyscf.bse import TDA_BSE
 
-def BSE(mf):
-    if isinstance(mf, scf.hf.KohnShamDFT):
-        raise RuntimeError('TDHF does not support DFT object %s' % mf)
-    mf = mf.remove_soscf()
-    if isinstance(mf, scf.rohf.ROHF):
-        # Is it correct to call TDUHF for ROHF?
-        mf = mf.to_uhf()
-    return mf.TDHF()
+def BSE(gw):
+    return gw.BSE()
 
-def TDA_BSE(mf):
-    mf = mf.remove_soscf()
-    if isinstance(mf, scf.rohf.ROHF):
-        if isinstance(mf, KohnShamDFT):
-            mf = mf.to_uks()
-        else:
-            mf = mf.to_uhf()
-    return mf.TDA()
+def TDA_BSE(gw):
+    return gw.TDA_BSE()
