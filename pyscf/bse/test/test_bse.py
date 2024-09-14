@@ -15,7 +15,8 @@
 #
 
 import unittest
-from pyscf import lib, gto, scf, gw, bse
+from pyscf import lib, gto, scf#, bse #TODO: uncomment
+from pyscf.gw import gw_ac
 
 def setUpModule():
     #doi: 10.1063/5.0023168
@@ -30,15 +31,16 @@ def setUpModule():
     mol.build()
     mf = scf.RHF(mol).run()
     
-    mygw = gw.GW_AC.GWAC(mf)
-    mygw.kernel()
+    gw = gw_ac.GWAC(mf)
+    gw.kernel()
     
     nstates = 5 # make sure first 3 states are converged
 
 def tearDownModule():
-    global mol, mf
-    mol.stdout.close()
-    del mol, mf
+    global gw
+    gw._scf.mol.stdout.close()
+    gw.stdout.close()
+    del gw
 
 #TODO: update the ref values
 class KnownValues(unittest.TestCase):
