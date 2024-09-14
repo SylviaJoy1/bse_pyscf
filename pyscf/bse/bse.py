@@ -699,3 +699,52 @@ gw.gw_cd.GWCD.TDA_BSE = lib.class_as_method(TDA_BSE)
 gw.gw_cd.GWCD.BSE = lib.class_as_method(BSE)
 
 # del (OUTPUT_THRESHOLD)
+
+
+if __name__ == "__main__":
+    from pyscf import lib, gto, scf, bse #TODO: uncomment
+    from pyscf.gw import gw_ac
+
+    mol = gto.Mole(unit='A')
+    mol.verbose = 7
+    mol.output = '/dev/null'
+    mol.atom = [['O',(0.0000, 0.0000, 0.0000)],
+             ['H', (0.7571, 0.0000, 0.5861)],
+             ['H', (-0.7571, 0.0000, 0.5861)]]
+    mol.basis = 'aug-cc-pVTZ'
+    mol.build()
+    mf = scf.RHF(mol).run()
+    
+    gw = gw_ac.GWAC(mf)
+    gw.kernel()
+    
+    nstates = 5 # make sure first 3 states are converged
+
+    def test_tda_bse_singlet():
+        mybse = gw.TDA_BSE().set(nstates=nstates)
+        e = mybse.kernel()[0]
+        ref = [8.09129, 9.78553, 10.41702] #[8.104560117202942, 9.78425883863174, 10.43390150150587]
+        numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
+
+    def test_tda_bse_triplet():
+        mybse = gw.TDA_BSE().set(nstates=nstates)
+        mybse.singlet = False
+        e = mybse.kernel()[0]
+        ref = [7.61802, 9.59825, 9.79518] #[7.635794126610576, 9.607487101850701, 9.826855704109516]
+        numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
+
+    #lit ref is for BSE, not TDA-BSE
+    def test_bse_singlet():
+        mybse = gw.BSE().set(nstates=nstates)
+        e = mybse.kernel()[0]
+        ref = [8.09129, 9.78553, 10.41702] #[8.08552929,  9.78006193, 10.41286796]
+        numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
+
+    def test_bse_triplet():
+        mybse = gw.BSE().set(nstates=nstates)
+        mybse.singlet = False
+        e = mybse.kernel()[0]
+        ref = [7.61802, 9.59825, 9.79518] #[7.61167318  9.59271311  9.79013569]
+        numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
+
+    
