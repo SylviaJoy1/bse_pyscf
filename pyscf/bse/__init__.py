@@ -16,8 +16,8 @@
 #         Tim
 #
 
-from pyscf.bse import BSE
-from pyscf.bse import TDA_BSE
+from pyscf.bse.bse import BSE
+from pyscf.bse.bse import TDA_BSE
 
 def BSE(gw):
     return gw.BSE()
