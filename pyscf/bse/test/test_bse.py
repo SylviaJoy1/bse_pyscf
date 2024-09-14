@@ -15,7 +15,7 @@
 #
 
 import unittest
-from pyscf import lib, gto, scf#, bse #TODO: uncomment
+from pyscf import lib, gto, scf, bse #TODO: uncomment
 from pyscf.gw import gw_ac
 
 def setUpModule():
