@@ -33,7 +33,7 @@ from pyscf.scf import hf_symm
 from pyscf.scf import _response_functions
 from pyscf.data import nist
 from pyscf import __config__
-from pyscf.tdscf._lr_eig import eigh as lr_eigh, eig as lr_eig
+#from pyscf.tdscf._lr_eig import eigh as lr_eigh, eig as lr_eig
 
 #OUTPUT_THRESHOLD = getattr(__config__, 'tdscf_rhf_get_nto_threshold', 0.3)
 REAL_EIG_THRESHOLD = getattr(__config__, 'tdscf_rhf_TDDFT_pick_eig_threshold', 1e-4)
@@ -66,8 +66,11 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
         if isinstance(wfnsym, str):
             wfnsym = symm.irrep_name2id(mol.groupname, wfnsym)
         wfnsym = wfnsym % 10  # convert to D2h subgroup
-        x_sym = _get_x_sym_table(mf)
-        sym_forbid = x_sym != wfnsym
+        orbsym = hf_symm.get_orbsym(mol, mo_coeff)
+        orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
+        sym_forbid = (orbsym_in_d2h[occidx,None] ^ orbsym_in_d2h[viridx]) != wfnsym
+#        x_sym = _get_x_sym_table(mf)
+#        sym_forbid = x_sym != wfnsym
 
     e_ia = hdiag = qp_energy[viridx] - qp_energy[occidx,None]
 
@@ -105,15 +108,6 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
 
     return vind, hdiag
 gen_tda_bse_hop = gen_tda_bse_operation
-
-#TODO: restrict to just orbs segments
-def _get_x_sym_table(mf):
-    '''Irrep (up to D2h symmetry) of each coefficient in X[nocc,nvir]'''
-    mol = mf.mol
-    mo_occ = mf.mo_occ
-    orbsym = hf_symm.get_orbsym(mol, mf.mo_coeff)
-    orbsym = orbsym % 10  # convert to D2h irreps
-    return orbsym[mo_occ==2,None] ^ orbsym[mo_occ==0]
 
 #TODO: re-implement get_nto() and analyze() and _analyze_wfnsym() and _guess_wfnsym_id() and _guess_wfnsym_id
 # if necessary to take into account orbs subspace
@@ -235,7 +229,7 @@ class BSEBase(lib.StreamObject):
     singlet = getattr(__config__, 'tdscf_rhf_TDA_singlet', True)
     lindep = getattr(__config__, 'tdscf_rhf_TDA_lindep', 1e-12)
     level_shift = getattr(__config__, 'tdscf_rhf_TDA_level_shift', 0)
-#    max_space = getattr(__config__, 'tdscf_rhf_TDA_max_space', 50)
+    max_space = getattr(__config__, 'tdscf_rhf_TDA_max_space', 50)
     max_cycle = getattr(__config__, 'tdscf_rhf_TDA_max_cycle', 100)
     # Low excitation filter to avoid numerical instability
     positive_eig_threshold = getattr(__config__, 'tdscf_rhf_TDDFT_positive_eig_threshold', 1e-3)
@@ -303,7 +297,7 @@ class BSEBase(lib.StreamObject):
         log.info('conv_tol = %g', self.conv_tol)
         log.info('eigh lindep = %g', self.lindep)
         log.info('eigh level_shift = %g', self.level_shift)
-#        log.info('eigh max_space = %d', self.max_space)
+        log.info('eigh max_space = %d', self.max_space)
         log.info('eigh max_cycle = %d', self.max_cycle)
         log.info('chkfile = %s', self.chkfile)
         log.info('max_memory %d MB (current use %d MB)',
@@ -415,18 +409,7 @@ class TDA_BSE(BSEBase):
 
     #TODO: should init guess be GW or MOs?
     #TODO: add orbs
-    def init_guess(self, gw, nstates=None, wfnsym=None, return_symmetry=False):
-        '''
-        Generate initial guess for TDA-BSE
-
-        Kwargs:
-            nstates : int
-                The number of initial guess vectors.
-            wfnsym : int or str
-                The irrep label or ID of the wavefunction.
-            return_symmetry : bool
-                Whether to return symmetry labels for initial guess vectors.
-        '''
+    def init_guess(self, gw, nstates=None, wfnsym=None):
         if nstates is None: nstates = self.nstates
         if wfnsym is None: wfnsym = self.wfnsym
 
@@ -435,37 +418,30 @@ class TDA_BSE(BSEBase):
         mo_occ = mf.mo_occ
         occidx = numpy.where(mo_occ==2)[0]
         viridx = numpy.where(mo_occ==0)[0]
-        e_ia = (mo_energy[viridx] - mo_energy[occidx,None]).ravel()
+        e_ia = mo_energy[viridx] - mo_energy[occidx,None]
+
+        if wfnsym is not None and mf.mol.symmetry:
+            if isinstance(wfnsym, str):
+                wfnsym = symm.irrep_name2id(mf.mol.groupname, wfnsym)
+            wfnsym = wfnsym % 10  # convert to D2h subgroup
+            orbsym = hf_symm.get_orbsym(mf.mol, mf.mo_coeff)
+            orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
+            sym_forbid = (orbsym_in_d2h[occidx,None] ^ orbsym_in_d2h[viridx]) != wfnsym
+#            orbsym = hf_symm.get_orbsym(mf.mol, mf.mo_coeff)
+#            orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
+#            e_ia[(orbsym_in_d2h[occidx,None] ^ orbsym_in_d2h[viridx]) != wfnsym] = 1e99
+
         nov = e_ia.size
         nstates = min(nstates, nov)
-
-        if (wfnsym is not None or return_symmetry) and mf.mol.symmetry:
-            x_sym = _get_x_sym_table(mf).ravel()
-            if wfnsym is not None:
-                if isinstance(wfnsym, str):
-                    wfnsym = symm.irrep_name2id(mf.mol.groupname, wfnsym)
-                wfnsym = wfnsym % 10  # convert to D2h subgroup
-                e_ia[x_sym != wfnsym] = 1e99
-                nov_allowed = numpy.count_nonzero(x_sym == wfnsym)
-                nstates = min(nstates, nov_allowed)
-
-        # Find the nstates-th lowest energy gap
-        e_threshold = numpy.partition(e_ia, nstates-1)[nstates-1]
+        e_ia = e_ia.ravel()
+        e_threshold = numpy.sort(e_ia)[nstates-1]
         e_threshold += self.deg_eia_thresh
 
         idx = numpy.where(e_ia <= e_threshold)[0]
         x0 = numpy.zeros((idx.size, nov))
         for i, j in enumerate(idx):
             x0[i, j] = 1  # Koopmans' excitations
-
-        if return_symmetry:
-            if mf.mol.symmetry:
-                x0sym = x_sym[idx]
-            else:
-                x0sym = None
-            return x0, x0sym
-        else:
-            return x0
+        return x0
 
     def kernel(self, x0=None, nstates=None):
         '''TDA-BSE diagonalization solver
@@ -487,18 +463,16 @@ class TDA_BSE(BSEBase):
             idx = numpy.where(w > self.positive_eig_threshold)[0]
             return w[idx], v[:,idx], idx
 
-        x0sym = None
         if x0 is None:
-            x0, x0sym = self.init_guess(
-                self.gw, self.nstates, return_symmetry=True)
-        elif self.mol.symmetry:
-            x_sym = _get_x_sym_table(self._scf).ravel()
-            x0sym = [_guess_wfnsym_id(self, x_sym, x) for x in x0]
+            x0 = self.init_guess(self.gw._scf, self.nstates)
 
-        self.converged, self.e, x1 = lr_eigh(
-            vind, x0, precond, tol_residual=self.conv_tol, lindep=self.lindep,
-            nroots=nstates, x0sym=x0sym, pick=pickeig, max_cycle=self.max_cycle,
-            max_memory=self.max_memory, verbose=log)
+        self.converged, self.e, x1 = \
+                lib.davidson1(vind, x0, precond,
+                              tol=self.conv_tol,
+                              nroots=nstates, lindep=self.lindep,
+                              max_cycle=self.max_cycle,
+                              max_space=self.max_space, pick=pickeig,
+                              verbose=log)
 
         nocc = (self._scf.mo_occ>0).sum()
         nmo = self._scf.mo_occ.size
@@ -541,7 +515,10 @@ def gen_bse_operation(gw, singlet=True, wfnsym=None):
         if isinstance(wfnsym, str):
             wfnsym = symm.irrep_name2id(mol.groupname, wfnsym)
         wfnsym = wfnsym % 10  # convert to D2h subgroup
-        sym_forbid = _get_x_sym_table(mf) != wfnsym
+        orbsym = hf_symm.get_orbsym(mol, mo_coeff)
+        orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
+        sym_forbid = (orbsym_in_d2h[occidx,None] ^ orbsym_in_d2h[viridx]) != wfnsym
+        # sym_forbid = _get_x_sym_table(mf) != wfnsym
 
     e_ia = hdiag = qp_energy[viridx] - qp_energy[occidx,None]
     if wfnsym is not None and mol.symmetry:
@@ -615,15 +592,20 @@ class BSE(BSEBase):
             gw = self.gw
         return gen_bse_operation(gw, singlet=self.singlet, wfnsym=self.wfnsym)
 
-    def init_guess(self, gw, nstates=None, wfnsym=None, return_symmetry=False):
-        if return_symmetry:
-            x0, x0sym = TDA_BSE.init_guess(self, gw, nstates, wfnsym, return_symmetry)
-            y0 = numpy.zeros_like(x0)
-            return numpy.hstack([x0, y0]), x0sym
-        else:
-            x0 = TDA_BSE.init_guess(self, gw, nstates, wfnsym, return_symmetry)
-            y0 = numpy.zeros_like(x0)
-            return numpy.hstack([x0, y0])
+
+    def init_guess(self, mf, nstates=None, wfnsym=None):
+        x0 = TDA.init_guess(self, mf, nstates, wfnsym)
+        y0 = numpy.zeros_like(x0)
+        return numpy.asarray(numpy.block([[x0, y0], [y0, x0.conj()]]))
+#    def init_guess(self, gw, nstates=None, wfnsym=None, return_symmetry=False):
+#        if return_symmetry:
+#            x0, x0sym = TDA_BSE.init_guess(self, gw, nstates, wfnsym, return_symmetry)
+#            y0 = numpy.zeros_like(x0)
+#            return numpy.hstack([x0, y0]), x0sym
+#        else:
+#            x0 = TDA_BSE.init_guess(self, gw, nstates, wfnsym, return_symmetry)
+#            y0 = numpy.zeros_like(x0)
+#            return numpy.hstack([x0, y0])
             
     def kernel(self, x0=None, nstates=None):
         '''TDHF diagonalization with non-Hermitian eigenvalue solver
@@ -659,19 +641,30 @@ class BSE(BSEBase):
             # approximately be used as the "real" eigen solutions.
             return lib.linalg_helper._eigs_cmplx2real(w, v, realidx, real_system)
 
-        x0sym = None
-        if x0 is None:
-            x0, x0sym = self.init_guess(
-                self.gw, self.nstates, return_symmetry=True)
-        elif mol.symmetry:
-            x_sym = y_sym = _get_x_sym_table(self._scf).ravel()
-            x_sym = numpy.append(x_sym, y_sym)
-            x0sym = [_guess_wfnsym_id(self, x_sym, x) for x in x0]
 
-        self.converged, w, x1 = lr_eig(
-            vind, x0, precond, tol_residual=self.conv_tol, lindep=self.lindep,
-            nroots=nstates, x0sym=x0sym, pick=pickeig, max_cycle=self.max_cycle,
-            max_memory=self.max_memory, verbose=log)
+        if x0 is None:
+            x0 = self.init_guess(self._scf, self.nstates)
+
+        self.converged, w, x1 = \
+                lib.davidson_nosym1(vind, x0, precond,
+                                    tol=self.conv_tol,
+                                    nroots=nstates, lindep=self.lindep,
+                                    max_cycle=self.max_cycle,
+                                    max_space=self.max_space, pick=pickeig,
+                                    verbose=log)
+#        x0sym = None
+#        if x0 is None:
+#            x0, x0sym = self.init_guess(
+#                self.gw, self.nstates, return_symmetry=True)
+#        elif mol.symmetry:
+#            x_sym = y_sym = _get_x_sym_table(self._scf).ravel()
+#            x_sym = numpy.append(x_sym, y_sym)
+#            x0sym = [_guess_wfnsym_id(self, x_sym, x) for x in x0]
+#
+#        self.converged, w, x1 = lr_eig(
+#            vind, x0, precond, tol_residual=self.conv_tol, lindep=self.lindep,
+#            nroots=nstates, x0sym=x0sym, pick=pickeig, max_cycle=self.max_cycle,
+#            max_memory=self.max_memory, verbose=log)
 
         #TODO: update for orbs
         nocc = (self._scf.mo_occ>0).sum()
