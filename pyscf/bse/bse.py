@@ -106,7 +106,7 @@ def gen_tda_bse_operation(gw, Lpq=None, eps_inv=None, singlet=True, orbs=None, w
             zs = numpy.copy(zs)
             zs[:,sym_forbid] = 0
 
-        v1ov = numpy.einsum('xia,ia->xia', zs, e_ia) #where e_ia is qp
+        v1ov = numpy.einsum('xia,ia->xia', zs, e_ia)
         v1ov -= lib.einsum('Pji, PQ, Qab, xjb->xia', Loo, eps_inv, Lvv, zs)
         if singlet:
             v1ov += 2*lib.einsum('Qia, Qjb,xjb->xia', Lov, Lov, zs)
@@ -675,8 +675,9 @@ if __name__ == "__main__":
 
     def test_tda_bse_singlet():
         mybse = gw.TDA_BSE().set(nstates=nstates)
-        mybse.orbs = range(nmo-1)
+        mybse.orbs = range(nmo)
         e = mybse.kernel()[0]
+        #TODO: why does analyze not work?
         mybse.analyze()
         print(e*27.2114)
         ref = [8.10895514,  9.78889175, 10.43696308] # my original TDA-BSE [8.104560117202942, 9.78425883863174, 10.43390150150587] # lit [8.09129, 9.78553, 10.41702]
