@@ -15,19 +15,24 @@
 #
 
 import unittest
-from pyscf import lib, gto, scf, tdscf
+from pyscf import lib, gto, scf, gw, bse
 
 def setUpModule():
-    global mol, mf, nstates
-    mol = gto.Mole()
+    #doi: 10.1063/5.0023168
+    global gw, nstates
+    mol = gto.Mole(unit='A')
     mol.verbose = 7
     mol.output = '/dev/null'
-    mol.atom = [
-        ['H' , (0. , 0. , .917)],
-        ['F' , (0. , 0. , 0.)], ]
-    mol.basis = '631g'
+    mol.atom = [['O',(0.0000, 0.0000, 0.0000)],
+             ['H', (0.7571, 0.0000, 0.5861)],
+             ['H', (-0.7571, 0.0000, 0.5861)]]
+    mol.basis = 'aug-cc-pVTZ'
     mol.build()
     mf = scf.RHF(mol).run()
+    
+    mygw = gw.GW_AC.GWAC(mf)
+    mygw.kernel()
+    
     nstates = 5 # make sure first 3 states are converged
 
 def tearDownModule():
@@ -35,34 +40,36 @@ def tearDownModule():
     mol.stdout.close()
     del mol, mf
 
+#TODO: update the ref values
 class KnownValues(unittest.TestCase):
-    def test_tda_singlet(self):
-        td = mf.TDA().set(nstates=nstates)
-        e = td.kernel()[0]
-        ref = [11.90276464, 11.90276464, 16.86036434]
+    def test_tda_bse_singlet(self):
+        mybse = gw.TDA_BSE().set(nstates=nstates)
+        e = mybse.kernel()[0]
+        ref = [8.09129, 9.78553, 10.41702] #[8.104560117202942, 9.78425883863174, 10.43390150150587]
         self.assertAlmostEqual(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
-    def test_tda_triplet(self):
-        td = mf.TDA().set(nstates=nstates)
-        td.singlet = False
-        e = td.kernel()[0]
-        ref = [11.01747918, 11.01747918, 13.16955056]
+    def test_tda_bse_triplet(self):
+        mybse = gw.TDA_BSE().set(nstates=nstates)
+        mybse.singlet = False
+        e = mybse.kernel()[0]
+        ref = [7.61802, 9.59825, 9.79518] #[7.635794126610576, 9.607487101850701, 9.826855704109516]
         self.assertAlmostEqual(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
-    def test_tdhf_singlet(self):
-        td = mf.TDHF().set(nstates=nstates)
-        e = td.kernel()[0]
-        ref = [11.83487199, 11.83487199, 16.66309285]
+    #lit ref is for BSE, not TDA-BSE
+    def test_bse_singlet(self):
+        mybse = gw.BSE().set(nstates=nstates)
+        e = mybse.kernel()[0]
+        ref = [8.09129, 9.78553, 10.41702] #[8.08552929,  9.78006193, 10.41286796]
         self.assertAlmostEqual(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
-    def test_tdhf_triplet(self):
-        td = mf.TDHF().set(nstates=nstates)
-        td.singlet = False
-        e = td.kernel()[0]
-        ref = [10.8919234, 10.8919234, 12.63440705]
+    def test_bse_triplet(self):
+        mybse = gw.BSE().set(nstates=nstates)
+        mybse.singlet = False
+        e = mybse.kernel()[0]
+        ref = [7.61802, 9.59825, 9.79518] #[7.61167318  9.59271311  9.79013569]
         self.assertAlmostEqual(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
 
 if __name__ == "__main__":
-    print("Full Tests for rhf-TDA and rhf-TDHF")
+    print("Full Tests for TDA-BSE and BSE")
     unittest.main()
