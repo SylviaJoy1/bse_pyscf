@@ -16,7 +16,7 @@
 # Authors: Sylvia Bintrim <sylviajoy1@gmail.com>
 #         Tim
 # Ref:
-# ?
+# ? TODO: make sure conjugation is correct
 #
 
 
@@ -34,15 +34,12 @@ from pyscf.scf import _response_functions
 from pyscf.data import nist
 from pyscf import __config__
 from pyscf.tdscf._lr_eig import eigh as lr_eigh, eig as lr_eig
-from pyscf import gw
 
 #OUTPUT_THRESHOLD = getattr(__config__, 'tdscf_rhf_get_nto_threshold', 0.3)
 REAL_EIG_THRESHOLD = getattr(__config__, 'tdscf_rhf_TDDFT_pick_eig_threshold', 1e-4)
 MO_BASE = getattr(__config__, 'MO_BASE', 1)
 
-#TODO: throw some error if not GW AC/CD
-
-#TODO: add gw frozen, bse orbs
+#TODO: add bse orbs once TDA-BSE and BSE work without it.
 def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
     '''Generate function to compute A x
 
@@ -72,7 +69,6 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
         x_sym = _get_x_sym_table(mf)
         sym_forbid = x_sym != wfnsym
 
-    #TODO: should this be mo_energy instead?
     e_ia = hdiag = qp_energy[viridx] - qp_energy[occidx,None]
 
     if wfnsym is not None and mol.symmetry:
@@ -87,8 +83,10 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
 #    nvir = nmo - nocc
     qp_e_occ = qp_energy[:nocc]#[bse.mf_nocc-nocc:bse.mf_nocc]
     qp_e_vir = qp_energy[nocc:]#[bse.mf_nocc:bse.mf_nocc+nvir]
-    i_tilde =
-    eris =  eris.Lov etc
+    Lpq, eps_inv = gw.make_imds() #add orbs
+    Loo = Lpq[:,:nocc,:nocc]
+    Lov = Lpq[:,:nocc,nocc:]
+    Lvv = Lpq[:,nocc:,nocc:]
 
     def vind(zs):
         zs = numpy.asarray(zs).reshape(-1,nocc,nvir)
@@ -96,10 +94,10 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
             zs = numpy.copy(zs)
             zs[:,sym_forbid] = 0
 
-        v1ov = np.einsum('xia,ia->xia', zs, e_ia) #where e_ia is qp
-        v1ov -= lib.einsum('Pji, PQ, Qab, xjb->xia', eris.Loo, i_tilde, eris.Lvv, zs)
-        if bse.singlet:
-            v1ov += 2*lib.einsum('Qia, Qjb,xjb->xia', eris.Lov, eris.Lov, zs)
+        v1ov = numpy.einsum('xia,ia->xia', zs, e_ia) #where e_ia is qp
+        v1ov -= lib.einsum('Pji, PQ, Qab, xjb->xia', Loo, eps_inv, Lvv, zs)
+        if singlet:
+            v1ov += 2*lib.einsum('Qia, Qjb,xjb->xia', Lov, Lov, zs)
 
         if wfnsym is not None and mol.symmetry:
             v1ov[:,sym_forbid] = 0
@@ -117,12 +115,13 @@ def _get_x_sym_table(mf):
     orbsym = orbsym % 10  # convert to D2h irreps
     return orbsym[mo_occ==2,None] ^ orbsym[mo_occ==0]
 
-#TODO: re-implement get_nto() and analyze() and _analyze_wfnsym() and _guess_wfnsym_id()
+#TODO: re-implement get_nto() and analyze() and _analyze_wfnsym() and _guess_wfnsym_id() and _guess_wfnsym_id
 # if necessary to take into account orbs subspace
 #otherwise, just import tdscf functions
+from pyscf.tdscf.rhf import _guess_wfnsym_id
 
 #bseobj should have attribute orbs
-#TODO: include orbs here
+#TODO: include orbs here (See my spectra code)
 def _contract_multipole(tdobj, ints, hermi=True, xy=None):
     '''ints is the integral tensor of a spin-independent operator'''
     if xy is None: xy = tdobj.xy
@@ -180,8 +179,7 @@ def as_scanner(td):
     logger.info(td, 'Set %s as a scanner', td.__class__)
     name = td.__class__.__name__ + TD_Scanner.__name_mixin__
     return lib.set_class(TD_Scanner(td), (TD_Scanner, td.__class__), name)
-
-#TODO: check this
+    
 class TD_Scanner(lib.SinglePointScanner):
     def __init__(self, td):
         self.__dict__.update(td.__dict__)
@@ -200,6 +198,36 @@ class TD_Scanner(lib.SinglePointScanner):
         self.kernel(**kwargs)
         return mf_e + self.e
 
+from pyscf.gw.gw_ac import get_rho_response
+from pyscf.ao2mo import _ao2mo
+def make_imds(gw, orbs):
+    mf_nocc = gw._scf.mol.nelectron//2
+    nocc = sum([x < mf_nocc for x in orbs])
+    nmo = len(orbs)
+    nvir = nmo - nocc
+    
+    mo_energy = numpy.array(gw._scf.mo_energy)
+    mo_coeff = numpy.array(gw._scf.mo_coeff)
+    nao = numpy.shape(gw._scf.mo_coeff)[-1]
+    mydf = gw.with_df
+    naux = mydf.get_naoaux()
+    
+    mo = numpy.asarray(mo_coeff, order='F')
+    ijslice = (0, nmo, 0, nmo)
+    p1 = 0
+    Lpq = None
+    for k, eri1 in enumerate(mydf.loop()):
+        Lpq = _ao2mo.nr_e2(eri1, mo, ijslice, aosym='s2', mosym='s1', out=Lpq)
+        p0, p1 = p1, p1 + Lpq.shape[0]
+        Lpq = Lpq.reshape(p1-p0,nmo,nmo)
+    
+    Lpq = numpy.asarray(Lpq)[:,mf_nocc-nocc:mf_nocc+nvir,mf_nocc-nocc:mf_nocc+nvir]
+
+    #static screening for BSE
+    Pi = numpy.real(get_rho_response(gw, 0.0, mo_energy, Lpq))
+    eps_inv = numpy.linalg.inv(numpy.eye(naux)-Pi)
+    
+    return Lpq, eps_inv
 
 class BSEBase(lib.StreamObject):
     conv_tol = getattr(__config__, 'tdscf_rhf_TDA_conv_tol', 1e-5) #TODO: make this smaller?
@@ -225,15 +253,26 @@ class BSEBase(lib.StreamObject):
         self.mol = gw._scf.mol
         self._scf = gw._scf
         self.max_memory = gw.max_memory
-        self.chkfile = gw.chkfile #TODO: or mf?
+        self.chkfile = gw._scf.chkfile
 
         self.wfnsym = None
+        
+        from pyscf.gw import gw_ac
+        from pyscf.gw import gw_cd
+        from pyscf.pbc.gw import krgw_ac
+        from pyscf.pbc.gw import krgw_cd
+        if not (isinstance(gw, gw_ac.GWAC) or isinstance(gw, gw_cd.GWCD) or isinstance(gw, krgw_ac.KRGWAC) or isinstance(gw, krgw_cd.KRGWCD)):
+            raise NotImplementedError('Only GW-AC and GW-CD are supported for the BSE.')
+        if isinstance(gw, krgw_ac.KRGWAC) or isinstance(gw, krgw_cd.KRGWCD):
+            assert gw.kpts == [[0,0,0]]
 
         # xy = (X,Y), normalized to 1/2: 2(XX-YY) = 1
         # In TDA, Y = 0
         self.converged = None
         self.e = None
         self.xy = None
+        self.eps_inv = None
+        self.Lpq = None
 
     @property
     def nroots(self):
@@ -287,8 +326,15 @@ class BSEBase(lib.StreamObject):
             self.mol = mol
         self._scf.reset(mol)
         return self
+        
+    def make_imds(self, gw=None):
+        if gw is None:
+            gw = self.gw
+        #TODO: add orbs
+        if self.eps_inv is None or self.Lpq is None:
+            self.eps_inv, self.Lpq = make_imds(gw)
+        return self.eps_inv, self.Lpq
 
-    #TODO: did I define gen_vind with gw as arg?
     def gen_vind(self, gw=None):
         raise NotImplementedError #defined for each subclass
         
@@ -445,7 +491,7 @@ class TDA_BSE(BSEBase):
         if x0 is None:
             x0, x0sym = self.init_guess(
                 self.gw, self.nstates, return_symmetry=True)
-        elif mol.symmetry:
+        elif self.mol.symmetry:
             x_sym = _get_x_sym_table(self._scf).ravel()
             x0sym = [_guess_wfnsym_id(self, x_sym, x) for x in x0]
 
@@ -569,7 +615,7 @@ class BSE(BSEBase):
             gw = self.gw
         return gen_bse_operation(gw, singlet=self.singlet, wfnsym=self.wfnsym)
 
-    def init_guess(self, gw, nstates=None, wfnsym=None):
+    def init_guess(self, gw, nstates=None, wfnsym=None, return_symmetry=False):
         if return_symmetry:
             x0, x0sym = TDA_BSE.init_guess(self, gw, nstates, wfnsym, return_symmetry)
             y0 = numpy.zeros_like(x0)
@@ -589,7 +635,7 @@ class BSE(BSEBase):
             nstates = self.nstates
         else:
             self.nstates = nstates
-         mol = self.mol
+        mol = self.mol
 
         log = logger.Logger(self.stdout, self.verbose)
 
@@ -653,9 +699,10 @@ class BSE(BSEBase):
 
     to_gpu = lib.to_gpu
 
+from pyscf import gw
 gw.gw_ac.GWAC.TDA_BSE = lib.class_as_method(TDA_BSE)
 gw.gw_ac.GWAC.BSE = lib.class_as_method(BSE)
 gw.gw_cd.GWCD.TDA_BSE = lib.class_as_method(TDA_BSE)
 gw.gw_cd.GWCD.BSE = lib.class_as_method(BSE)
 
-del (OUTPUT_THRESHOLD)
+# del (OUTPUT_THRESHOLD)
