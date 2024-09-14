@@ -653,9 +653,9 @@ class BSE(BSEBase):
 
     to_gpu = lib.to_gpu
 
-gw.gw_ac.TDA_BSE = lib.class_as_method(TDA_BSE)
-gw.gw_ac.BSE = lib.class_as_method(BSE)
-gw.gw_cd.TDA_BSE = lib.class_as_method(TDA_BSE)
-gw.gw_cd.BSE = lib.class_as_method(BSE)
+gw.gw_ac.GWAC.TDA_BSE = lib.class_as_method(TDA_BSE)
+gw.gw_ac.GWAC.BSE = lib.class_as_method(BSE)
+gw.gw_cd.GWCD.TDA_BSE = lib.class_as_method(TDA_BSE)
+gw.gw_cd.GWCD.BSE = lib.class_as_method(BSE)
 
 del (OUTPUT_THRESHOLD)
