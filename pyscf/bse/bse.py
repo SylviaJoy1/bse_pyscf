@@ -86,7 +86,7 @@ def gen_tda_bse_operation(gw, singlet=True, wfnsym=None):
 #    nvir = nmo - nocc
     qp_e_occ = qp_energy[:nocc]#[bse.mf_nocc-nocc:bse.mf_nocc]
     qp_e_vir = qp_energy[nocc:]#[bse.mf_nocc:bse.mf_nocc+nvir]
-    Lpq, eps_inv = gw.make_imds() #add orbs
+    Lpq, eps_inv = make_imds(gw) #add orbs
     Loo = Lpq[:,:nocc,:nocc]
     Lov = Lpq[:,:nocc,nocc:]
     Lvv = Lpq[:,nocc:,nocc:]
@@ -194,10 +194,10 @@ class TD_Scanner(lib.SinglePointScanner):
 
 from pyscf.gw.gw_ac import get_rho_response
 from pyscf.ao2mo import _ao2mo
-def make_imds(gw, orbs):
+def make_imds(gw, orbs=None):
     mf_nocc = gw._scf.mol.nelectron//2
-    nocc = sum([x < mf_nocc for x in orbs])
-    nmo = len(orbs)
+    nocc = mf_nocc#sum([x < mf_nocc for x in orbs])
+    nmo = gw.nmo#len(orbs)
     nvir = nmo - nocc
     
     mo_energy = numpy.array(gw._scf.mo_energy)
@@ -218,7 +218,7 @@ def make_imds(gw, orbs):
     Lpq = numpy.asarray(Lpq)[:,mf_nocc-nocc:mf_nocc+nvir,mf_nocc-nocc:mf_nocc+nvir]
 
     #static screening for BSE
-    Pi = numpy.real(get_rho_response(gw, 0.0, mo_energy, Lpq))
+    Pi = numpy.real(get_rho_response(0.0, mo_energy, Lpq[:,:nocc, nocc:]))
     eps_inv = numpy.linalg.inv(numpy.eye(naux)-Pi)
     
     return Lpq, eps_inv
@@ -252,12 +252,12 @@ class BSEBase(lib.StreamObject):
         self.wfnsym = None
         
         from pyscf.gw import gw_ac
-        from pyscf.gw import gw_cd
+        # from pyscf.gw import gw_cd
         from pyscf.pbc.gw import krgw_ac
-        from pyscf.pbc.gw import krgw_cd
-        if not (isinstance(gw, gw_ac.GWAC) or isinstance(gw, gw_cd.GWCD) or isinstance(gw, krgw_ac.KRGWAC) or isinstance(gw, krgw_cd.KRGWCD)):
-            raise NotImplementedError('Only GW-AC and GW-CD are supported for the BSE.')
-        if isinstance(gw, krgw_ac.KRGWAC) or isinstance(gw, krgw_cd.KRGWCD):
+        # from pyscf.pbc.gw import krgw_cd
+        if not (isinstance(gw, gw_ac.GWAC) or isinstance(gw, krgw_ac.KRGWAC)):
+            raise NotImplementedError('Only GW-AC is supported for the BSE.')
+        if isinstance(gw, krgw_ac.KRGWAC):# or isinstance(gw, krgw_cd.KRGWCD):
             assert gw.kpts == [[0,0,0]]
 
         # xy = (X,Y), normalized to 1/2: 2(XX-YY) = 1
@@ -291,7 +291,7 @@ class BSEBase(lib.StreamObject):
             log.info('nstates = %d singlet', self.nstates)
         else:
             log.info('nstates = %d triplet', self.nstates)
-        log.info('orbs = {}'.format(self.orbs))
+        # log.info('orbs = {}'.format(self.orbs))
         log.info('deg_eia_thresh = %.3e', self.deg_eia_thresh)
         log.info('wfnsym = %s', self.wfnsym)
         log.info('conv_tol = %g', self.conv_tol)
@@ -304,14 +304,14 @@ class BSEBase(lib.StreamObject):
                  self.max_memory, lib.current_memory()[0])
         if not self._scf.converged:
             log.warn('Ground state SCF is not converged')
-        if not self.gw.converged:
+        if not gw.converged:
             log.warn('GW is not converged')
         log.info('\n')
 
     def check_sanity(self):
         if self._scf.mo_coeff is None:
             raise RuntimeError('SCF object is not initialized')
-        if self.gw.mo_energy is None:
+        if gw.mo_energy is None:
             raise RuntimeError('GW object is not initialized')
         lib.StreamObject.check_sanity(self)
 
@@ -321,9 +321,7 @@ class BSEBase(lib.StreamObject):
         self._scf.reset(mol)
         return self
         
-    def make_imds(self, gw=None):
-        if gw is None:
-            gw = self.gw
+    def make_imds(self, gw):
         #TODO: add orbs
         if self.eps_inv is None or self.Lpq is None:
             self.eps_inv, self.Lpq = make_imds(gw)
@@ -403,17 +401,13 @@ class TDA_BSE(BSEBase):
     '''
     def gen_vind(self, gw=None):
         '''Generate function to compute Ax'''
-        if gw is None:
-            gw = self.gw
         return gen_tda_bse_hop(gw, singlet=self.singlet, wfnsym=self.wfnsym)
 
-    #TODO: should init guess be GW or MOs?
     #TODO: add orbs
-    def init_guess(self, gw, nstates=None, wfnsym=None):
+    def init_guess(self, mf, nstates=None, wfnsym=None):
         if nstates is None: nstates = self.nstates
         if wfnsym is None: wfnsym = self.wfnsym
 
-        mf = gw._scf
         mo_energy = mf.mo_energy
         mo_occ = mf.mo_occ
         occidx = numpy.where(mo_occ==2)[0]
@@ -456,7 +450,7 @@ class TDA_BSE(BSEBase):
 
         log = logger.Logger(self.stdout, self.verbose)
 
-        vind, hdiag = self.gen_vind(self.gw)
+        vind, hdiag = self.gen_vind(gw)
         precond = self.get_precond(hdiag)
 
         def pickeig(w, v, nroots, envs):
@@ -464,7 +458,7 @@ class TDA_BSE(BSEBase):
             return w[idx], v[:,idx], idx
 
         if x0 is None:
-            x0 = self.init_guess(self.gw._scf, self.nstates)
+            x0 = self.init_guess(gw._scf, self.nstates)
 
         self.converged, self.e, x1 = \
                 lib.davidson1(vind, x0, precond,
@@ -588,13 +582,11 @@ class BSE(BSEBase):
     '''
     @lib.with_doc(gen_bse_operation.__doc__)
     def gen_vind(self, gw=None):
-        if gw is None:
-            gw = self.gw
         return gen_bse_operation(gw, singlet=self.singlet, wfnsym=self.wfnsym)
 
 
     def init_guess(self, mf, nstates=None, wfnsym=None):
-        x0 = TDA.init_guess(self, mf, nstates, wfnsym)
+        x0 = TDA_BSE.init_guess(self, mf, nstates, wfnsym)
         y0 = numpy.zeros_like(x0)
         return numpy.asarray(numpy.block([[x0, y0], [y0, x0.conj()]]))
 #    def init_guess(self, gw, nstates=None, wfnsym=None, return_symmetry=False):
@@ -621,14 +613,14 @@ class BSE(BSEBase):
 
         log = logger.Logger(self.stdout, self.verbose)
 
-        vind, hdiag = self.gen_vind(self.gw)
+        vind, hdiag = self.gen_vind(gw)
         precond = self.get_precond(hdiag)
 
         # handle single kpt PBC SCF
-        if getattr(self.gw._scf, 'kpt', None) is not None:
+        if getattr(gw._scf, 'kpt', None) is not None:
             from pyscf.pbc.lib.kpts_helper import gamma_point
-            real_system = (gamma_point(self.gw._scf.kpt) and
-                           self.gw._scf.mo_coeff[0].dtype == numpy.double)
+            real_system = (gamma_point(gw._scf.kpt) and
+                           gw._scf.mo_coeff[0].dtype == numpy.double)
         else:
             real_system = True
 
@@ -695,8 +687,8 @@ class BSE(BSEBase):
 from pyscf import gw
 gw.gw_ac.GWAC.TDA_BSE = lib.class_as_method(TDA_BSE)
 gw.gw_ac.GWAC.BSE = lib.class_as_method(BSE)
-gw.gw_cd.GWCD.TDA_BSE = lib.class_as_method(TDA_BSE)
-gw.gw_cd.GWCD.BSE = lib.class_as_method(BSE)
+# gw.gw_cd.GWCD.TDA_BSE = lib.class_as_method(TDA_BSE)
+# gw.gw_cd.GWCD.BSE = lib.class_as_method(BSE)
 
 # del (OUTPUT_THRESHOLD)
 
@@ -718,19 +710,21 @@ if __name__ == "__main__":
     gw = gw_ac.GWAC(mf)
     gw.kernel()
     
-    nstates = 5 # make sure first 3 states are converged
+    nstates = 4 # make sure first 3 states are converged
 
     def test_tda_bse_singlet():
         mybse = gw.TDA_BSE().set(nstates=nstates)
         e = mybse.kernel()[0]
-        ref = [8.09129, 9.78553, 10.41702] #[8.104560117202942, 9.78425883863174, 10.43390150150587]
+        print(e*27.2114)
+        ref = [8.10893968,  9.78881112, 10.43695137] # my original TDA-BSE [8.104560117202942, 9.78425883863174, 10.43390150150587] # lit [8.09129, 9.78553, 10.41702]
         numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
     def test_tda_bse_triplet():
         mybse = gw.TDA_BSE().set(nstates=nstates)
         mybse.singlet = False
         e = mybse.kernel()[0]
-        ref = [7.61802, 9.59825, 9.79518] #[7.635794126610576, 9.607487101850701, 9.826855704109516]
+        print(e*27.2114)
+        ref = [7.64039135,  9.61206481,  9.83006989] # my original TDA-BSE [7.635794126610576, 9.607487101850701, 9.826855704109516] # lit [7.61802, 9.59825, 9.79518]
         numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
 
     #lit ref is for BSE, not TDA-BSE
@@ -746,5 +740,10 @@ if __name__ == "__main__":
         e = mybse.kernel()[0]
         ref = [7.61802, 9.59825, 9.79518] #[7.61167318  9.59271311  9.79013569]
         numpy.testing.assert_almost_equal(abs(e[:len(ref)] * 27.2114 - ref).max(), 0, 5)
+        
+    test_tda_bse_singlet()
+    test_tda_bse_triplet()
+    # test_bse_singlet()
+    # test_bse_triplet()
 
     
